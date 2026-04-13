@@ -1,7 +1,8 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 import os
 
 # --- DATABASE SETUP ---
@@ -13,138 +14,158 @@ def init_db():
                   timestamp TEXT,
                   name TEXT,
                   amount REAL,
+                  method TEXT,
                   txid TEXT,
                   status TEXT,
-                  reason TEXT,
-                  approved_amount REAL)''')
+                  reason TEXT)''')
     conn.commit()
     return conn
 
 conn = init_db()
 
+# --- SESSION STATE MANAGEMENT ---
+if 'step' not in st.session_state:
+    st.session_state.step = 1
+if 'pay_method' not in st.session_state:
+    st.session_state.pay_method = None
+if 'amount' not in st.session_state:
+    st.session_state.amount = 0.0
+if 'start_time' not in st.session_state:
+    st.session_state.start_time = datetime.now()
+
 # --- STYLING ---
-st.set_page_config(page_title="Payment Portal", layout="wide")
+st.set_page_config(page_title="Secure Pay", layout="centered")
 
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
-    .bank-card {
-        background-color: white;
-        padding: 25px;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border-top: 5px solid #004a99;
+    .step-tracker { color: #666; font-size: 14px; text-align: center; margin-bottom: 20px; }
+    .pay-card {
+        background: white; padding: 20px; border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1); border: 1px solid #e1e4e8;
+        cursor: pointer; transition: 0.3s; margin-bottom: 10px;
     }
-    .status-pending { color: #f39c12; font-weight: bold; }
-    .status-approved { color: #27ae60; font-weight: bold; }
-    .status-declined { color: #c0392b; font-weight: bold; }
+    .timer-box {
+        background: #fff5f5; color: #e53e3e; padding: 10px;
+        border-radius: 8px; text-align: center; font-weight: bold;
+        border: 1px solid #feb2b2; margin-bottom: 20px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- NAVIGATION ---
-page = st.sidebar.radio("Navigation", ["Make Payment", "Check Status", "Admin Panel"])
+# --- UTILS ---
+def next_step(): st.session_state.step += 1
+def reset_flow(): 
+    st.session_state.step = 1
+    st.session_state.start_time = datetime.now()
 
-# --- PAGE 1: USER PAYMENT ---
-if page == "Make Payment":
-    st.title("💳 Secure Checkout")
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.markdown("### 🏦 Payment Details")
-        st.markdown(f"""
-        <div class="bank-card">
-            <h4 style="color:#004a99; margin-top:0;">Federal Bank</h4>
-            <p><strong>Account Holder:</strong> Shubham Sharma</p>
-            <p><strong>Account Number:</strong> 24950100015849</p>
-            <p><strong>IFSC Code:</strong> FDRL0002495</p>
-            <hr>
-            <p><strong>UPI ID:</strong> <span style="background:#e8f0fe; padding:2px 5px;">shreeshyam101@ptyes</span></p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.subheader("Scan QR Code")
-        # Ensure your image file is named exactly 'qr_code.png' in GitHub
-        if os.path.exists("qr_code.png"):
-            st.image("qr_code.png", width=300)
-        else:
-            st.info("Scan using the UPI ID provided on the left.")
-
-    st.divider()
-
-    st.subheader("Submit Payment Proof")
-    with st.form("user_form", clear_on_submit=True):
-        name = st.text_input("Your Full Name")
-        amount = st.number_input("Amount Paid", min_value=1.0)
-        txid = st.text_input("Transaction ID / UTR Number")
-        uploaded_file = st.file_uploader("Upload Screenshot", type=['jpg','png','jpeg'])
-        
-        if st.form_submit_button("Submit Transaction"):
-            if name and txid:
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                c = conn.cursor()
-                c.execute("INSERT INTO transactions (timestamp, name, amount, txid, status, reason, approved_amount) VALUES (?,?,?,?,?,?,?)",
-                          (now, name, amount, txid, "Pending", "", 0.0))
-                conn.commit()
-                st.success("✅ Transaction submitted successfully! Please check status later.")
-            else:
-                st.error("Please fill in all details.")
-
-# --- PAGE 2: USER STATUS CHECK ---
-elif page == "Check Status":
-    st.title("🔍 Check Your Payment Status")
-    search_txid = st.text_input("Enter your Transaction ID / UTR")
-    
-    if search_txid:
-        query = pd.read_sql_query("SELECT status, reason, approved_amount FROM transactions WHERE txid=?", conn, params=(search_txid,))
-        if not query.empty:
-            status = query['status'][0]
-            st.markdown(f"Current Status: <span class='status-{status.lower()}'>{status}</span>", unsafe_allow_html=True)
-            if status == "Approved":
-                st.balloons()
-                st.info(f"Verified Amount: ₹{query['approved_amount'][0]}")
-            elif status == "Declined":
-                st.error(f"Reason: {query['reason'][0]}")
-        else:
-            st.warning("No record found for this Transaction ID.")
-
-# --- PAGE 3: ADMIN PANEL ---
-elif page == "Admin Panel":
-    st.title("⚙️ Admin Control Panel")
-    
-    pw = st.sidebar.text_input("Admin Password", type="password")
-    if pw == "admin123":
-        data = pd.read_sql_query("SELECT * FROM transactions WHERE status='Pending' ORDER BY id DESC", conn)
-        
-        if not data.empty:
-            for index, row in data.iterrows():
-                with st.expander(f"Pending: {row['name']} (₹{row['amount']})"):
-                    st.write(f"**UTR:** {row['txid']} | **Time:** {row['timestamp']}")
-                    
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        app_amt = st.number_input("Confirm Amount", value=row['amount'], key=f"amt_{row['id']}")
-                    with col_b:
-                        dec_reason = st.text_input("Decline Reason", key=f"rec_{row['id']}")
-                    
-                    btn_col1, btn_col2 = st.columns(2)
-                    if btn_col1.button(f"Approve ✅", key=f"app_{row['id']}"):
-                        conn.execute("UPDATE transactions SET status='Approved', approved_amount=? WHERE id=?", (app_amt, row['id']))
-                        conn.commit()
-                        st.rerun()
-                    
-                    if btn_col2.button(f"Decline ❌", key=f"dec_{row['id']}"):
-                        conn.execute("UPDATE transactions SET status='Declined', reason=? WHERE id=?", (dec_reason, row['id']))
-                        conn.commit()
-                        st.rerun()
-        else:
-            st.success("No pending transactions.")
-            
-        st.divider()
-        st.subheader("All Records")
-        history = pd.read_sql_query("SELECT * FROM transactions", conn)
-        st.dataframe(history, use_container_width=True)
+# --- TIMER LOGIC ---
+def show_timer():
+    elapsed = datetime.now() - st.session_state.start_time
+    remaining = timedelta(minutes=10) - elapsed
+    if remaining.total_seconds() > 0:
+        mins, secs = divmod(int(remaining.total_seconds()), 60)
+        st.markdown(f'<div class="timer-box">⏱️ Payment expires in: {mins:02d}:{secs:02d}</div>', unsafe_allow_html=True)
     else:
-        st.info("Please enter the admin password in the sidebar to continue.")
+        st.error("Session Expired. Please restart.")
+        if st.button("Restart"): reset_flow()
+        st.stop()
+
+# --- APP NAVIGATION ---
+page = st.sidebar.radio("Navigation", ["User Payment", "Check Status", "Admin Panel"])
+
+if page == "User Payment":
+    # STEP 1: SELECT METHOD
+    if st.session_state.step == 1:
+        st.title("Select Payment Method")
+        st.write("Choose how you would like to pay:")
+        
+        if st.button("📱 UPI ID / GPay / PhonePe"):
+            st.session_state.pay_method = "UPI"
+            next_step()
+        if st.button("📸 Scan QR Code"):
+            st.session_state.pay_method = "QR"
+            next_step()
+        if st.button("🏦 Bank Transfer (IMPS/NEFT)"):
+            st.session_state.pay_method = "Bank"
+            next_step()
+
+    # STEP 2: ENTER AMOUNT
+    elif st.session_state.step == 2:
+        st.title("Enter Amount")
+        st.session_state.amount = st.number_input("How much are you paying?", min_value=1.0, step=1.0)
+        if st.button("Continue to Payment"):
+            if st.session_state.amount > 0:
+                st.session_state.start_time = datetime.now() # Start timer here
+                next_step()
+
+    # STEP 3: ACTUAL PAYMENT & UPLOAD
+    elif st.session_state.step == 3:
+        show_timer()
+        st.title("Complete Payment")
+        st.info(f"Method: {st.session_state.pay_method} | Amount: ₹{st.session_state.amount}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.session_state.pay_method == "UPI":
+                st.code("shreeshyam101@ptyes", language="text")
+                st.caption("Copy and paste this UPI ID in your payment app.")
+            elif st.session_state.pay_method == "QR":
+                if os.path.exists("qr_code.png"): st.image("qr_code.png")
+                else: st.warning("QR Code Image Missing")
+            elif st.session_state.pay_method == "Bank":
+                st.markdown("""**Federal Bank** Acc: 24950100015849  
+                IFSC: FDRL0002495  
+                Name: Shubham Sharma""")
+
+        with col2:
+            with st.form("proof_form"):
+                u_name = st.text_input("Your Name")
+                u_utr = st.text_input("UTR / Transaction ID")
+                u_file = st.file_uploader("Screenshot", type=['jpg','png'])
+                if st.form_submit_button("Submit Payment"):
+                    if u_name and u_utr:
+                        c = conn.cursor()
+                        c.execute("INSERT INTO transactions (timestamp, name, amount, method, txid, status, reason) VALUES (?,?,?,?,?,?,?)",
+                                  (datetime.now().strftime("%Y-%m-%d %H:%M"), u_name, st.session_state.amount, st.session_state.pay_method, u_utr, "Pending", ""))
+                        conn.commit()
+                        next_step()
+                    else:
+                        st.error("Fill all fields")
+
+    # STEP 4: SUCCESS PAGE
+    elif st.session_state.step == 4:
+        st.balloons()
+        st.success("### 🎉 Transaction Saved!")
+        st.write("Your payment is being verified by our team. This usually takes 5-30 minutes.")
+        st.info("Kindly check your status using your Transaction ID in the 'Check Status' tab.")
+        if st.button("Make Another Payment"): reset_flow()
+
+elif page == "Check Status":
+    st.title("🔍 Check Status")
+    tid = st.text_input("Enter UTR Number")
+    if tid:
+        res = pd.read_sql_query("SELECT status, reason FROM transactions WHERE txid=?", conn, params=(tid,))
+        if not res.empty:
+            st.subheader(f"Status: {res['status'][0]}")
+            if res['reason'][0]: st.error(f"Note: {res['reason'][0]}")
+        else: st.warning("Not found.")
+
+elif page == "Admin Panel":
+    pw = st.sidebar.text_input("Password", type="password")
+    if pw == "admin123":
+        st.title("Admin Dashboard")
+        df = pd.read_sql_query("SELECT * FROM transactions WHERE status='Pending'", conn)
+        st.write("Pending Tasks:", df)
+        # Admin approval logic (same as previous code)
+        for i, r in df.iterrows():
+            with st.expander(f"Review {r['name']}"):
+                reason = st.text_input("Decline Reason", key=f"re{i}")
+                c1, c2 = st.columns(2)
+                if c1.button("Approve", key=f"ap{i}"):
+                    conn.execute("UPDATE transactions SET status='Approved' WHERE id=?", (r['id'],))
+                    conn.commit()
+                    st.rerun()
+                if c2.button("Decline", key=f"de{i}"):
+                    conn.execute("UPDATE transactions SET status='Declined', reason=? WHERE id=?", (reason, r['id']))
+                    conn.commit()
+                    st.rerun()
