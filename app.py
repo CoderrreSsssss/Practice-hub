@@ -66,11 +66,11 @@ if page == "Make Payment":
 
     with col2:
         st.subheader("Scan QR Code")
-        # Replace 'qr_code.png' with your actual filename
+        # Ensure your image file is named exactly 'qr_code.png' in GitHub
         if os.path.exists("qr_code.png"):
             st.image("qr_code.png", width=300)
         else:
-            st.warning("Please upload 'qr_code.png' to the repository.")
+            st.info("Scan using the UPI ID provided on the left.")
 
     st.divider()
 
@@ -98,7 +98,7 @@ elif page == "Check Status":
     search_txid = st.text_input("Enter your Transaction ID / UTR")
     
     if search_txid:
-        query = pd.read_sql_query(f"SELECT status, reason, approved_amount FROM transactions WHERE txid='{search_txid}'", conn)
+        query = pd.read_sql_query("SELECT status, reason, approved_amount FROM transactions WHERE txid=?", conn, params=(search_txid,))
         if not query.empty:
             status = query['status'][0]
             st.markdown(f"Current Status: <span class='status-{status.lower()}'>{status}</span>", unsafe_allow_html=True)
@@ -114,9 +114,8 @@ elif page == "Check Status":
 elif page == "Admin Panel":
     st.title("⚙️ Admin Control Panel")
     
-    # Simple password protection
     pw = st.sidebar.text_input("Admin Password", type="password")
-    if pw == "admin123": # Change this password!
+    if pw == "admin123":
         data = pd.read_sql_query("SELECT * FROM transactions WHERE status='Pending' ORDER BY id DESC", conn)
         
         if not data.empty:
@@ -124,11 +123,11 @@ elif page == "Admin Panel":
                 with st.expander(f"Pending: {row['name']} (₹{row['amount']})"):
                     st.write(f"**UTR:** {row['txid']} | **Time:** {row['timestamp']}")
                     
-                    col_a, col_b, col_c = st.columns(3)
+                    col_a, col_b = st.columns(2)
                     with col_a:
                         app_amt = st.number_input("Confirm Amount", value=row['amount'], key=f"amt_{row['id']}")
                     with col_b:
-                        dec_reason = st.text_input("Decline Reason (if applicable)", key=f"rec_{row['id']}")
+                        dec_reason = st.text_input("Decline Reason", key=f"rec_{row['id']}")
                     
                     btn_col1, btn_col2 = st.columns(2)
                     if btn_col1.button(f"Approve ✅", key=f"app_{row['id']}"):
@@ -141,11 +140,11 @@ elif page == "Admin Panel":
                         conn.commit()
                         st.rerun()
         else:
-            st.success("No pending transactions to review.")
+            st.success("No pending transactions.")
             
         st.divider()
-        st.subheader("Transaction History")
-        history = pd.read_sql_query("SELECT * FROM transactions WHERE status != 'Pending'", conn)
+        st.subheader("All Records")
+        history = pd.read_sql_query("SELECT * FROM transactions", conn)
         st.dataframe(history, use_container_width=True)
     else:
-        st.info("Please enter the admin password in the sidebar
+        st.info("Please enter the admin password in the sidebar to continue.")
